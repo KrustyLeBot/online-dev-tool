@@ -1,8 +1,6 @@
 #include "JsonSizeAnalyser.h"
 #include "CustomImgui.h"
 
-void ShowObject(json json, std::string padding = "");
-
 bool JsonSizeAnalyser::Draw()
 {
 	if (!ImGui::Begin(m_name.c_str(), &m_isOpen))
@@ -24,21 +22,44 @@ bool JsonSizeAnalyser::Draw()
 	if (ImGui::Button("Parse"))
 	{
 		m_parsedJson = json::parse(m_str);
+		m_jsonSizeDisplayList.clear();
+
+		std::vector<std::uint8_t> compact = json::to_cbor(m_parsedJson);
+		m_totalSize = compact.size();
+		m_totalSizef = static_cast<float>(m_totalSize);
+
+		ParseObjectSize(m_parsedJson, m_totalSize);
+		std::reverse(m_jsonSizeDisplayList.begin(), m_jsonSizeDisplayList.end());
 	}
 
-	//Parse every key and display the object
-	ShowObject(m_parsedJson);
+	for (const auto& object : m_jsonSizeDisplayList)
+	{
+		std::ostringstream outLeft;
+		outLeft << std::get<0>(object) << "[" << std::get<3>(object) << "B" << "(" << std::get<2>(object) << " key B)" << "]";
+
+		//Text is clipped by the front, so add a lot of padding so that the text is alligned always at the right side
+		std::ostringstream outRight;
+		outRight << "                                                                                                                                                                                                 ";
+		outRight << std::get<1>(object) << "  " << std::get<4>(object) * 100 << "%%";
+
+		
+		ImGui::Text(outLeft.str().c_str());
+		ImGui::SameLine();
+		ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(ImColor(154, 38, 23)));
+		ImGui::ProgressBar(std::get<4>(object), ImVec2(-1.0f, -0.0f), outRight.str().c_str());
+		ImGui::PopStyleColor();
+	}
 
 	ImGui::End();
 
 	return true;
 }
 
-void ShowObject(json json, std::string padding /*= ""*/)
+size_t JsonSizeAnalyser::ParseObjectSize(json json, size_t parentSize, std::string padding /*= ""*/)
 {
 	if (json.is_null())
 	{
-		return;
+		return 0;
 	}
 
 	std::ostringstream newPadding;
@@ -47,38 +68,57 @@ void ShowObject(json json, std::string padding /*= ""*/)
 	// if json is object
 	if (json.is_object())
 	{
+		size_t sumSize = 0;
+
+		for (auto& el : json.items())
+		{
+			std::vector<std::uint8_t> compact = json::to_cbor(el);
+			size_t size = compact.size();
+			sumSize += size;
+		}
+
 		for (auto& el : json.items())
 		{
 			std::ostringstream out;
-			out << newPadding.str() << "-" << el.key();
+			out << el.key();
 
-			std::vector<std::uint8_t> v_bson = json::to_bson(el);
-			out << "     " << v_bson.size() << "Bytes";
+			std::vector<std::uint8_t> compact = json::to_cbor(el);
+			size_t size = compact.size();
 
-			ImGui::Text(out.str().c_str());
-			ShowObject(el.value(), newPadding.str());
+			size_t childSize = ParseObjectSize(el.value(), size, newPadding.str());
+
+			// if value is an item (string, int, bool etc...), directly dump its value in the current field
+			if (!el.value().is_array() && !el.value().is_null() && !el.value().is_object())
+			{
+				out << " : " << el.value().dump();
+			}
+
+			m_jsonSizeDisplayList.push_back(std::make_tuple(newPadding.str(), out.str(), size - childSize, size, (static_cast<float>(size) / m_totalSizef), (static_cast<float>(size) / sumSize)));
 		}
-		return;
+		return sumSize;
 	}
 
 	// if json is array
 	if (json.is_array())
 	{
-		std::ostringstream out;
-		out << newPadding.str() << "-" << json.dump();
+		size_t sumSize = 0;
 
 		for (auto& el : json.items())
 		{
-			ShowObject(el.value(), newPadding.str());
+			std::vector<std::uint8_t> compact = json::to_cbor(el);
+			size_t size = compact.size();
+			sumSize += size;
+
+			ParseObjectSize(el.value(), size, newPadding.str());
 		}
-		return;
+		return sumSize;
 	}
 
 	//json is value
 	{
-		std::ostringstream out;
-		out << newPadding.str() << "-" << json.dump();
-
-		ImGui::Text(out.str().c_str());
+		std::vector<std::uint8_t> compact = json::to_cbor(json);
+		size_t size = compact.size();
+		
+		return size;
 	}
 }
