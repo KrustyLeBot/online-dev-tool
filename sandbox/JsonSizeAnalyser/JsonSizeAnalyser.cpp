@@ -28,8 +28,7 @@ bool JsonSizeAnalyser::Draw()
 		m_totalSize = compact.size();
 		m_totalSizef = static_cast<float>(m_totalSize);
 
-		ParseObjectSize(m_parsedJson, m_totalSize);
-		std::reverse(m_jsonSizeDisplayList.begin(), m_jsonSizeDisplayList.end());
+		ParseObjectSize(m_parsedJson);
 	}
 
 	for (const auto& object : m_jsonSizeDisplayList)
@@ -55,11 +54,11 @@ bool JsonSizeAnalyser::Draw()
 	return true;
 }
 
-size_t JsonSizeAnalyser::ParseObjectSize(json json, size_t parentSize, std::string padding /*= ""*/)
+void JsonSizeAnalyser::ParseObjectSize(json json, std::string padding /*= ""*/)
 {
 	if (json.is_null())
 	{
-		return 0;
+		return;
 	}
 
 	std::ostringstream newPadding;
@@ -68,24 +67,19 @@ size_t JsonSizeAnalyser::ParseObjectSize(json json, size_t parentSize, std::stri
 	// if json is object
 	if (json.is_object())
 	{
-		size_t sumSize = 0;
-
-		for (auto& el : json.items())
-		{
-			std::vector<std::uint8_t> compact = json::to_cbor(el);
-			size_t size = compact.size();
-			sumSize += size;
-		}
-
 		for (auto& el : json.items())
 		{
 			std::ostringstream out;
 			out << el.key();
 
+			std::vector<std::uint8_t> compactKey = json::to_cbor(el.key());
+			size_t sizeKey = compactKey.size();
+
+			std::vector<std::uint8_t> compactValue = json::to_cbor(el.value());
+			size_t sizeValue = compactValue.size();
+
 			std::vector<std::uint8_t> compact = json::to_cbor(el);
 			size_t size = compact.size();
-
-			size_t childSize = ParseObjectSize(el.value(), size, newPadding.str());
 
 			// if value is an item (string, int, bool etc...), directly dump its value in the current field
 			if (!el.value().is_array() && !el.value().is_null() && !el.value().is_object())
@@ -93,32 +87,37 @@ size_t JsonSizeAnalyser::ParseObjectSize(json json, size_t parentSize, std::stri
 				out << " : " << el.value().dump();
 			}
 
-			m_jsonSizeDisplayList.push_back(std::make_tuple(newPadding.str(), out.str(), size - childSize, size, (static_cast<float>(size) / m_totalSizef), (static_cast<float>(size) / sumSize)));
+			m_jsonSizeDisplayList.push_back(std::make_tuple(newPadding.str(), out.str(), sizeKey, size, (static_cast<float>(size) / m_totalSizef)));
+
+			ParseObjectSize(el.value(), newPadding.str());
 		}
-		return sumSize;
+		return;
 	}
 
 	// if json is array
 	if (json.is_array())
 	{
-		size_t sumSize = 0;
-
+		int i = 0;
 		for (auto& el : json.items())
 		{
 			std::vector<std::uint8_t> compact = json::to_cbor(el);
 			size_t size = compact.size();
-			sumSize += size;
 
-			ParseObjectSize(el.value(), size, newPadding.str());
+			std::ostringstream out;
+			out << "[" << i << "]";
+
+			// if value is an item (string, int, bool etc...), directly dump its value in the current field
+			if (!el.value().is_array() && !el.value().is_null() && !el.value().is_object())
+			{
+				out << " : " << el.value().dump();
+			}
+
+			m_jsonSizeDisplayList.push_back(std::make_tuple(newPadding.str(), out.str(), 0, size, (static_cast<float>(size) / m_totalSizef)));
+
+			ParseObjectSize(el.value(), newPadding.str());
+
+			i++;
 		}
-		return sumSize;
-	}
-
-	//json is value
-	{
-		std::vector<std::uint8_t> compact = json::to_cbor(json);
-		size_t size = compact.size();
-		
-		return size;
+		return;
 	}
 }
